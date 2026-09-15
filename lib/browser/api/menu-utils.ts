@@ -39,7 +39,39 @@ function pushOntoMultiMap<K, V>(map: Map<K, V[]>, key: K, value: V) {
   map.get(key)!.push(value);
 }
 
-function indexOfGroupContainingID<T>(groups: { id?: T }[][], id: T, ignoreGroup: { id?: T }[]) {
+function indexGroupsByID<T>(groups: { id?: T }[][]) {
+  const groupsByID = new Map<T | undefined, number[]>();
+
+  for (const [index, group] of groups.entries()) {
+    for (const item of group) {
+      const indexes = groupsByID.get(item.id);
+      if (indexes == null) {
+        groupsByID.set(item.id, [index]);
+      } else if (indexes[indexes.length - 1] !== index) {
+        // A group can contain multiple items with the same ID, but it only
+        // needs to be considered once when resolving group relationships.
+        indexes.push(index);
+      }
+    }
+  }
+
+  return groupsByID;
+}
+
+function indexOfGroupContainingID<T>(
+  groups: { id?: T }[][],
+  id: T,
+  ignoreGroup: { id?: T }[],
+  groupsByID?: Map<T | undefined, number[]>,
+  ignoreIndex?: number
+) {
+  if (groupsByID != null) {
+    const indexes = groupsByID.get(id);
+    if (indexes == null) return -1;
+    const ignoredIndex = ignoreIndex ?? groups.indexOf(ignoreGroup);
+    return indexes.find((index) => index !== ignoredIndex) ?? -1;
+  }
+
   return groups.findIndex(
     (candidateGroup) =>
       candidateGroup !== ignoreGroup && candidateGroup.some((candidateItem) => candidateItem.id === id)
@@ -129,13 +161,14 @@ function sortItemsInGroup<T>(group: { before?: T[]; after?: T[]; id?: T }[]) {
 function findEdgesInGroup<T>(
   groups: { beforeGroupContaining?: T[]; afterGroupContaining?: T[]; id?: T }[][],
   i: number,
-  edges: Map<any, any>
+  edges: Map<any, any>,
+  groupsByID: Map<T | undefined, number[]>
 ) {
   const group = groups[i];
   for (const item of group) {
     if (item.beforeGroupContaining) {
       for (const id of item.beforeGroupContaining) {
-        const to = indexOfGroupContainingID(groups, id, group);
+        const to = indexOfGroupContainingID(groups, id, group, groupsByID, i);
         if (to !== -1) {
           pushOntoMultiMap(edges, to, i);
           return;
@@ -144,7 +177,7 @@ function findEdgesInGroup<T>(
     }
     if (item.afterGroupContaining) {
       for (const id of item.afterGroupContaining) {
-        const to = indexOfGroupContainingID(groups, id, group);
+        const to = indexOfGroupContainingID(groups, id, group, groupsByID, i);
         if (to !== -1) {
           pushOntoMultiMap(edges, i, to);
           return;
@@ -157,9 +190,10 @@ function findEdgesInGroup<T>(
 function sortGroups<T>(groups: { id?: T }[][]) {
   const originalOrder = groups.map((item, i) => i);
   const edges = new Map();
+  const groupsByID = indexGroupsByID(groups);
 
   for (let i = 0; i < groups.length; i++) {
-    findEdgesInGroup(groups, i, edges);
+    findEdgesInGroup(groups, i, edges, groupsByID);
   }
 
   const sortedGroupIndexes = sortTopologically(originalOrder, edges);
